@@ -7,6 +7,7 @@ Optional: pip install tkinterdnd2   (enables drag-and-drop)
 Usage:    python gui.py
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import config
 
 TRANSCRIBE_SCRIPT = Path(__file__).parent / "transcribe.py"
 TOKEN_FILE        = Path(__file__).parent / "hf_token.txt"
+SETTINGS_FILE     = Path(__file__).parent / "user_settings.json"
 W = 560   # fixed window width
 
 # ── Drag-and-drop (optional) ──────────────────────────────────────────────────
@@ -27,6 +29,26 @@ try:
     _DND = True
 except ImportError:
     _DND = False
+
+# ── CJK font detection ───────────────────────────────────────────────────────
+def _detect_cjk_font() -> str:
+    """Return the best available sans-serif font with CJK coverage."""
+    try:
+        from tkinter import font as tkfont
+        avail = set(tkfont.families())
+        for cand in ("Microsoft YaHei UI", "Microsoft YaHei",
+                     "PingFang SC", "Hiragino Sans GB",
+                     "Source Han Sans SC", "Noto Sans CJK SC"):
+            if cand in avail:
+                return cand
+    except Exception:
+        pass
+    # Platform-appropriate sans-serif fallback when no CJK font found
+    if sys.platform == "darwin":
+        return "Helvetica Neue"
+    if sys.platform == "win32":
+        return "Segoe UI"
+    return "DejaVu Sans"   # Linux default
 
 # ── System theme detection ────────────────────────────────────────────────────
 def _system_is_dark() -> bool:
@@ -39,7 +61,23 @@ def _system_is_dark() -> bool:
             return bool(val)
         except Exception:
             pass
-    return False  # fallback: light theme (safer default)
+    elif sys.platform == "darwin":
+        try:
+            r = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, text=True, timeout=2)
+            return r.stdout.strip().lower() == "dark"
+        except Exception:
+            pass
+    else:  # Linux / other
+        try:
+            r = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                capture_output=True, text=True, timeout=2)
+            return "dark" in r.stdout.lower()
+        except Exception:
+            pass
+    return False
 
 # ── Color themes ──────────────────────────────────────────────────────────────
 THEMES = {
@@ -93,6 +131,8 @@ I18N = {
         "open_btn":      "Open transcript →",
         "err_no_file":   "Please select a file first.",
         "err_missing":   "File not found.",
+        "outdir_lbl":    "Output folder",
+        "browse_btn":    "Browse",
         "details_btn":   "Details ↓",
         "set_token_btn": "Set token ▸",
     },
@@ -120,6 +160,8 @@ I18N = {
         "open_btn":      "打开转录文件 →",
         "err_no_file":   "请先选择视频文件。",
         "err_missing":   "文件不存在。",
+        "outdir_lbl":    "输出目录",
+        "browse_btn":    "浏览",
         "details_btn":   "查看详情 ↓",
         "set_token_btn": "设置 Token ▸",
     },
@@ -139,10 +181,11 @@ MODELS   = ["large-v3", "medium", "small", "base", "tiny"]
 DEVICES  = ["auto", "cuda", "cpu"]
 SPEAKERS = ["auto", "2", "3", "4", "5"]
 
-FONT      = ("Segoe UI", 10)
-FONT_BOLD = ("Segoe UI", 11, "bold")
-FONT_HEAD = ("Segoe UI", 13, "bold")
-FONT_TINY = ("Segoe UI", 9)
+def _make_fonts(face: str):
+    """Build the (FONT, FONT_BOLD, FONT_HEAD, FONT_TINY) tuple for a font face."""
+    return (face, 10), (face, 11, "bold"), (face, 13, "bold"), (face, 9)
+
+FONT, FONT_BOLD, FONT_HEAD, FONT_TINY = _make_fonts("Segoe UI")
 
 STEP_LABELS = {
     "[1/4]":               "Step 1/4 — Converting audio…",
@@ -162,6 +205,11 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
 
     def __init__(self):
         super().__init__()
+
+        # Update font globals to best available CJK-capable face (needs Tk to exist)
+        global FONT, FONT_BOLD, FONT_HEAD, FONT_TINY
+        FONT, FONT_BOLD, FONT_HEAD, FONT_TINY = _make_fonts(_detect_cjk_font())
+
         self._ui_lang     = "en"
         self._theme_key   = "dark" if _system_is_dark() else "light"
         self._c           = THEMES[self._theme_key]
@@ -173,6 +221,11 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._token_visible = False
         self._checks: dict  = {}
         self._divs: list[tk.Frame] = []
+
+        # Output directory — persisted in user_settings.json
+        _us = self._load_user_settings()
+        self._var_outdir = tk.StringVar(
+            value=_us.get("transcript_dir", str(config.TRANSCRIPT_DIR)))
 
         self.title("meeting-transcriber")
         self.resizable(False, False)
@@ -255,9 +308,28 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
                      values=list(AUDIO_LANGS.keys()),
                      state="readonly", width=18, font=FONT).pack(side="left")
 
+        # ── Output folder row (always visible) ──
+        self._f_outdir = tk.Frame(self, bg=c["bg"])
+        self._f_outdir.pack(fill="x", padx=24, pady=(8, 2))
+
+        self._lbl_outdir = tk.Label(self._f_outdir, bg=c["bg"], font=FONT,
+                                     width=12, anchor="w")
+        self._lbl_outdir.pack(side="left")
+
+        # Pack Browse first so entry can fill the remaining space
+        self._btn_outdir = tk.Button(self._f_outdir, command=self._browse_outdir,
+                                      font=FONT_TINY, relief="flat", cursor="hand2",
+                                      bd=0, padx=8, pady=3)
+        self._btn_outdir.pack(side="right")
+
+        self._entry_outdir = tk.Entry(self._f_outdir, textvariable=self._var_outdir,
+                                       state="readonly", font=FONT_TINY,
+                                       relief="flat", bd=1, cursor="arrow")
+        self._entry_outdir.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
         # ── Settings toggle button ──
         self._btn_settings = tk.Button(self, command=self._toggle_settings,
-                                        font=FONT_TINY, relief="flat", cursor="hand2",
+                                        font=FONT, relief="flat", cursor="hand2",
                                         bd=0, anchor="w", padx=24, pady=8)
         self._btn_settings.pack(fill="x")
 
@@ -372,7 +444,7 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         for f in (self._f_hdr, self._f_text, self._f_ctrl,
                   self._f_xlang, self._f_action,
                   self._panel_settings, self._grid_settings,
-                  self._f_token, self._panel_log):
+                  self._f_token, self._f_outdir, self._panel_log):
             f.configure(bg=c["bg"])
 
         for div in self._divs:
@@ -394,11 +466,13 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
 
         self._lbl_xlang.configure(bg=c["bg"], fg=c["fg"])
 
-        for btn in (self._btn_settings, self._btn_log):
-            btn.configure(bg=c["bg"], fg=c["fg_dim"],
-                          activebackground=c["bg"], activeforeground=c["fg"])
+        self._btn_settings.configure(bg=c["bg"], fg=c["fg"],
+                                      activebackground=c["bg"], activeforeground=c["fg"])
+        self._btn_log.configure(bg=c["bg"], fg=c["fg_dim"],
+                                 activebackground=c["bg"], activeforeground=c["fg"])
 
-        for attr in ("_lbl_model", "_lbl_device", "_lbl_speaker", "_lbl_token"):
+        for attr in ("_lbl_model", "_lbl_device", "_lbl_speaker", "_lbl_token",
+                     "_lbl_outdir"):
             getattr(self, attr).configure(bg=c["bg"], fg=c["fg"])
 
         self._entry_token.configure(bg=c["bg2"], fg=c["fg"],
@@ -406,7 +480,12 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
                                      highlightbackground=c["bg3"],
                                      highlightthickness=1)
 
-        for btn in (self._btn_token_eye, self._btn_token_save):
+        self._entry_outdir.configure(bg=c["bg2"], fg=c["fg"],
+                                      readonlybackground=c["bg2"],
+                                      highlightbackground=c["bg3"],
+                                      highlightthickness=1)
+
+        for btn in (self._btn_token_eye, self._btn_token_save, self._btn_outdir):
             btn.configure(bg=c["bg2"], fg=c["accent"],
                           activebackground=c["bg3"], activeforeground=c["accent"])
 
@@ -472,6 +551,8 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._lbl_token.configure(text=t("token_lbl"))
         self._btn_token_eye.configure(text=t("token_show"))
         self._btn_token_save.configure(text=t("token_save"))
+        self._lbl_outdir.configure(text=t("outdir_lbl"))
+        self._btn_outdir.configure(text=t("browse_btn"))
         self._cb_diarize.configure(text=t("diarize"))
         self._btn_start.configure(text=t("transcribe"))
         self._btn_log.configure(text=t("log_hide") if self._log_open else t("log_show"))
@@ -666,6 +747,30 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
     def _scroll_log_end(self):
         self._log_text.see("end")
 
+    # ── Output directory ──────────────────────────────────────────────────────
+
+    def _browse_outdir(self):
+        current = self._var_outdir.get()
+        path = filedialog.askdirectory(
+            title="Select output folder for transcripts",
+            initialdir=current if Path(current).exists() else str(Path.home()),
+        )
+        if path:
+            self._var_outdir.set(path)
+            self._save_user_settings()
+
+    def _load_user_settings(self) -> dict:
+        try:
+            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save_user_settings(self):
+        settings = self._load_user_settings()
+        settings["transcript_dir"] = self._var_outdir.get()
+        SETTINGS_FILE.write_text(
+            json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+
     # ── File ──────────────────────────────────────────────────────────────────
 
     def _pick_file(self):
@@ -706,6 +811,7 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
             return
 
         self._running = True
+        self._outdir_snapshot = Path(self._var_outdir.get())
         self._btn_open.pack_forget()
         self._btn_start.configure(state="disabled", bg=self._c["bg3"])
         self._set_status(self._t("running"))
@@ -736,6 +842,8 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         if spk != "auto":
             cmd += ["--max-speakers", spk]
 
+        cmd += ["--output-dir", str(self._outdir_snapshot)]
+
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         proc = subprocess.Popen(
@@ -743,9 +851,13 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
             text=True, encoding="utf-8", errors="replace",
             env=env,
         )
+        done_marker = "✓ Done → "
+        emitted_path: Path | None = None
         for line in proc.stdout:
             line = line.rstrip()
             self.after(0, self._append_log, line)
+            if done_marker in line:
+                emitted_path = Path(line.split(done_marker, 1)[1].strip())
             for marker, label in STEP_LABELS.items():
                 if marker in line:
                     self.after(0, self._set_status, label)
@@ -753,7 +865,10 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         proc.wait()
 
         if proc.returncode == 0:
-            self._output_path = config.TRANSCRIPT_DIR / f"{self._video_path.stem}.md"
+            # Prefer the path transcribe.py actually wrote; fall back to the
+            # expected location if the marker line wasn't captured.
+            self._output_path = emitted_path or (
+                self._outdir_snapshot / f"{self._video_path.stem}.md")
             self.after(0, self._on_done)
         else:
             self.after(0, self._on_error, proc.returncode)
