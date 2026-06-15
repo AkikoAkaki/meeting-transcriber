@@ -8,6 +8,8 @@
 
 [English](README.md)
 
+<img width="1254" height="1254" alt="3de7748e736e3185d5a6b84ef6016c1c" src="https://github.com/user-attachments/assets/d810b6fb-a214-4a50-8568-7e76ee740fed" />
+
 ---
 
 ## 功能介绍
