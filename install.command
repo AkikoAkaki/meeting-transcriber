@@ -36,7 +36,7 @@ echo ""
 
 # ── Python dependencies ──
 echo "Installing Python packages..."
-pip3 install -r "$(dirname "$0")/requirements.txt"
+pip3 install --break-system-packages -r "$(dirname "$0")/requirements.txt"
 
 echo ""
 echo "========================================"

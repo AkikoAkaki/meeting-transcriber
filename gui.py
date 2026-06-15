@@ -508,7 +508,8 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._btn_start = tk.Button(self._f_action, command=self._start,
                                      font=FONT_BOLD, relief="flat",
                                      padx=20, pady=8, cursor="hand2", bd=0)
-        # Hidden until token is set (shown by _update_onboarding)
+        self._btn_start.pack(side="left")
+        # Shown/hidden by _update_onboarding based on token availability
         self._lbl_status = tk.Label(self._f_action, bg=c["bg"], font=FONT)
         self._lbl_status.pack(side="left", padx=14)
 
@@ -926,6 +927,7 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._btn_token_save.configure(text=self._t("token_saved"))
         self.after(1500, lambda: self._btn_token_save.configure(text=self._t("token_save")))
         self._update_banner()
+        self._update_onboarding()
 
     def _focus_token(self):
         if not self._settings_open:
