@@ -857,14 +857,14 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
 
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
-        proc = subprocess.Popen(
+        self._proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
             env=env,
         )
         done_marker = "✓ Done → "
         emitted_path: Path | None = None
-        for line in proc.stdout:
+        for line in self._proc.stdout:
             line = line.rstrip()
             self.after(0, self._append_log, line)
             if done_marker in line:
@@ -878,23 +878,25 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
                 if marker in line:
                     self.after(0, self._set_status, label)
                     break
-        proc.wait()
+        self._proc.wait()
 
-        if proc.returncode == 0:
+        if self._proc.returncode == 0:
             # Prefer the path transcribe.py actually wrote; fall back to the
             # expected location if the marker line wasn't captured.
             self._output_path = emitted_path or (
                 self._outdir_snapshot / f"{self._video_path.stem}.md")
             self.after(0, self._on_done)
         else:
-            self.after(0, self._on_error, proc.returncode)
+            self.after(0, self._on_error, self._proc.returncode)
 
     def _on_done(self):
         self._progress.stop()
         self._progress.pack_forget()
         self._running = False
         self._set_status(f"✓  {self._output_path.name}", "success")
-        self._btn_start.configure(state="normal", bg=self._c["success"])
+        self._proc = None
+        self._btn_start.configure(
+            text=self._t("transcribe"), command=self._start, bg=self._c["success"])
         self._btn_open.pack(anchor="w", padx=24, pady=(0, 16))
         self._autosize()
 
@@ -903,7 +905,10 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._progress.pack_forget()
         self._running = False
         self._set_status(f"✗  exit {code} — see log", "danger")
-        self._btn_start.configure(state="normal", bg=self._c["success"])
+        self._proc = None
+        self._btn_start.configure(
+            text=self._t("transcribe"), command=self._start,
+            state="normal", bg=self._c["accent"])
         if not self._log_open:
             self._toggle_log()
         self._autosize()
