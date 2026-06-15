@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import json
 
 try:
     from watchdog.events import FileSystemEventHandler
@@ -25,6 +26,19 @@ except ImportError:
 import config
 
 TRANSCRIBE = Path(__file__).parent / "transcribe.py"
+SETTINGS_FILE = Path(__file__).parent / "user_settings.json"
+
+
+def _load_user_output_dir(settings_path: Path = SETTINGS_FILE) -> Path | None:
+    """Return the transcript dir saved by the GUI, or None if unset."""
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+        d = data.get("transcript_dir")
+        if d:
+            return Path(d)
+    except Exception:
+        pass
+    return None
 
 
 class VideoHandler(FileSystemEventHandler):
@@ -97,8 +111,12 @@ class VideoHandler(FileSystemEventHandler):
             logging.info("[dry-run] skipping actual transcription")
             return
 
+        cmd = [sys.executable, str(TRANSCRIBE), str(video_path)]
+        out_dir = _load_user_output_dir()
+        if out_dir:
+            cmd += ["--output-dir", str(out_dir)]
         proc = subprocess.Popen(
-            [sys.executable, str(TRANSCRIBE), str(video_path)],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

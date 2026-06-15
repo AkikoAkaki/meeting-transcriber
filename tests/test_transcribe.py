@@ -82,3 +82,36 @@ def test_generate_srt_timestamp_format():
 def test_generate_srt_empty():
     import transcribe
     assert transcribe.generate_srt([]) == ""
+
+
+def test_watch_reads_user_settings_output_dir(tmp_path, monkeypatch):
+    """watch._load_user_output_dir returns the saved transcript_dir path."""
+    import json
+
+    # Stub out watchdog so the watch module can be imported
+    sys.modules["watchdog"] = type(sys)("watchdog")
+    sys.modules["watchdog.events"] = type(sys)("watchdog.events")
+    sys.modules["watchdog.events"].FileSystemEventHandler = object
+    sys.modules["watchdog.observers"] = type(sys)("watchdog.observers")
+    sys.modules["watchdog.observers"].Observer = object
+
+    import watch
+
+    settings = tmp_path / "user_settings.json"
+    settings.write_text(json.dumps({"transcript_dir": str(tmp_path / "my_transcripts")}))
+
+    result = watch._load_user_output_dir(settings_path=settings)
+    assert result == tmp_path / "my_transcripts"
+
+
+def test_watch_returns_none_when_no_settings(tmp_path, monkeypatch):
+    # Stub out watchdog so the watch module can be imported
+    sys.modules["watchdog"] = type(sys)("watchdog")
+    sys.modules["watchdog.events"] = type(sys)("watchdog.events")
+    sys.modules["watchdog.events"].FileSystemEventHandler = object
+    sys.modules["watchdog.observers"] = type(sys)("watchdog.observers")
+    sys.modules["watchdog.observers"].Observer = object
+
+    import watch
+    result = watch._load_user_output_dir(settings_path=tmp_path / "nonexistent.json")
+    assert result is None
