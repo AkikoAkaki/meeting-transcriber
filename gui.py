@@ -120,6 +120,7 @@ I18N = {
         "model_lbl":     "Model",
         "device_lbl":    "Device",
         "speaker_lbl":   "Speakers",
+        "pipeline_lbl":  "Pipeline",
         "token_lbl":     "HF Token",
         "token_hint":    "paste token here",
         "token_save":    "Save",
@@ -150,6 +151,7 @@ I18N = {
         "model_lbl":     "模型",
         "device_lbl":    "设备",
         "speaker_lbl":   "说话人数",
+        "pipeline_lbl":  "流水线",
         "token_lbl":     "HF Token",
         "token_hint":    "在此粘贴 token",
         "token_save":    "保存",
@@ -183,6 +185,7 @@ AUDIO_LANGS = {
 MODELS   = ["large-v3", "medium", "small", "base", "tiny"]
 DEVICES  = ["auto", "cuda", "cpu"]
 SPEAKERS = ["auto", "2", "3", "4", "5"]
+PIPELINE_MODES = ["Full pipeline", "Transcribe only", "Re-diarize only"]
 
 def _make_fonts(face: str):
     """Build the (FONT, FONT_BOLD, FONT_HEAD, FONT_TINY) tuple for a font face."""
@@ -347,11 +350,13 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._var_model    = tk.StringVar(value=config.WHISPER_MODEL)
         self._var_device   = tk.StringVar(value=config.DEVICE)
         self._var_speakers = tk.StringVar(value="auto")
+        self._var_pipeline = tk.StringVar(value=PIPELINE_MODES[0])
 
         rows = [
-            ("_lbl_model",   self._var_model,    MODELS),
-            ("_lbl_device",  self._var_device,   DEVICES),
-            ("_lbl_speaker", self._var_speakers, SPEAKERS),
+            ("_lbl_model",    self._var_model,    MODELS),
+            ("_lbl_device",   self._var_device,   DEVICES),
+            ("_lbl_speaker",  self._var_speakers, SPEAKERS),
+            ("_lbl_pipeline", self._var_pipeline, PIPELINE_MODES),
         ]
         for i, (attr, var, vals) in enumerate(rows):
             lbl = tk.Label(self._grid_settings, bg=c["bg"], font=FONT, width=12, anchor="w")
@@ -386,13 +391,6 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
                                           bd=0, padx=8, pady=3)
         self._btn_token_save.pack(side="left", padx=(4, 0))
 
-        # Diarize checkbox
-        self._var_diarize = tk.BooleanVar(value=True)
-        self._cb_diarize = tk.Checkbutton(self._panel_settings,
-                                           variable=self._var_diarize,
-                                           font=FONT, cursor="hand2",
-                                           bg=c["bg"], activebackground=c["bg"])
-        self._cb_diarize.pack(anchor="w", padx=24, pady=(2, 8))
 
         self._divs.append(self._mk_div())
 
@@ -475,8 +473,8 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._btn_log.configure(bg=c["bg"], fg=c["fg_dim"],
                                  activebackground=c["bg"], activeforeground=c["fg"])
 
-        for attr in ("_lbl_model", "_lbl_device", "_lbl_speaker", "_lbl_token",
-                     "_lbl_outdir"):
+        for attr in ("_lbl_model", "_lbl_device", "_lbl_speaker", "_lbl_pipeline",
+                     "_lbl_token", "_lbl_outdir"):
             getattr(self, attr).configure(bg=c["bg"], fg=c["fg"])
 
         self._entry_token.configure(bg=c["bg2"], fg=c["fg"],
@@ -493,16 +491,11 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
             btn.configure(bg=c["bg2"], fg=c["accent"],
                           activebackground=c["bg3"], activeforeground=c["accent"])
 
-        self._cb_diarize.configure(bg=c["bg"], fg=c["fg"],
-                                    selectcolor=c["bg2"],
-                                    activebackground=c["bg"],
-                                    activeforeground=c["fg"])
-
         self._lbl_status.configure(bg=c["bg"])
         self._btn_start.configure(
-            bg=c["bg3"] if self._running else c["success"],
+            bg=c["danger"] if self._running else c["success"],
             fg="#ffffff",
-            activebackground=c["bg3"] if self._running else c["success"],
+            activebackground=c["danger"] if self._running else c["success"],
             activeforeground="#ffffff",
         )
 
@@ -557,7 +550,7 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         self._btn_token_save.configure(text=t("token_save"))
         self._lbl_outdir.configure(text=t("outdir_lbl"))
         self._btn_outdir.configure(text=t("browse_btn"))
-        self._cb_diarize.configure(text=t("diarize"))
+        self._lbl_pipeline.configure(text=t("pipeline_lbl"))
         self._btn_start.configure(text=t("transcribe"))
         self._btn_log.configure(text=t("log_hide") if self._log_open else t("log_show"))
         self._btn_open.configure(text=t("open_btn"))
@@ -838,8 +831,11 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         lang = AUDIO_LANGS[self._var_xlang.get()]
         if lang:
             cmd += ["--language", lang]
-        if not self._var_diarize.get():
+        pipeline_mode = self._var_pipeline.get()
+        if pipeline_mode == PIPELINE_MODES[1]:   # "Transcribe only"
             cmd += ["--transcribe-only"]
+        elif pipeline_mode == PIPELINE_MODES[2]: # "Re-diarize only"
+            cmd += ["--diarize-only"]
 
         model = self._var_model.get()
         if model != config.WHISPER_MODEL:
