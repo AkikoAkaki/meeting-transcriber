@@ -123,8 +123,11 @@ def run_whisper(wav_path: Path, whisper_json: Path, language: str | None) -> lis
     device = _resolve_device()
     compute_type = "float16" if device == "cuda" else "int8"
     lang_display = language or "auto-detect"
+    MODEL_SIZES = {"tiny": "~75 MB", "base": "~145 MB", "small": "~466 MB",
+                   "medium": "~1.5 GB", "large-v3": "~3.1 GB"}
+    size_hint = MODEL_SIZES.get(config.WHISPER_MODEL, "")
     print(f"[2/4] Loading Whisper {config.WHISPER_MODEL} on {device} ({compute_type})...", flush=True)
-    print(f"      (First run: model weights will be downloaded to HuggingFace cache)", flush=True)
+    print(f"      (First run: downloading {config.WHISPER_MODEL} {size_hint} — please wait)", flush=True)
 
     try:
         model = WhisperModel(config.WHISPER_MODEL, device=device, compute_type=compute_type)
@@ -178,7 +181,7 @@ def run_diarization(wav_path: Path, diarize_json: Path) -> list[dict]:
 
     os.environ["HF_TOKEN"] = token
     print("[3/4] Loading pyannote/speaker-diarization-3.1...", flush=True)
-    print("      (First run: model weights will be downloaded)", flush=True)
+    print("      (First run: downloading pyannote models ~500 MB — please wait)", flush=True)
     try:
         pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=token)
     except Exception as e:
@@ -331,6 +334,18 @@ def _main():
         config.DEVICE = args.device
     if args.max_speakers is not None:
         config.MAX_SPEAKERS = args.max_speakers
+
+    import platform
+    print(f"Python {sys.version.split()[0]} | {platform.system()} {platform.release()}", flush=True)
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cuda_info = f"CUDA {torch.version.cuda} — {torch.cuda.get_device_name(0)}"
+        else:
+            cuda_info = "CPU only (no CUDA)"
+        print(f"torch {torch.__version__} | {cuda_info}", flush=True)
+    except ImportError:
+        print("torch not installed", flush=True)
 
     language = args.language or config.LANGUAGE
     input_path = Path(args.input).resolve()
