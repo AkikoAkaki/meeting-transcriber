@@ -732,9 +732,12 @@ class App(TkinterDnD.Tk if _DND else tk.Tk):
         if spk != "auto":
             cmd += ["--max-speakers", spk]
 
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
+            env=env,
         )
         for line in proc.stdout:
             line = line.rstrip()

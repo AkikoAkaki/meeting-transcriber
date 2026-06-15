@@ -19,6 +19,13 @@ import sys
 import argparse
 from pathlib import Path
 
+# Force UTF-8 stdout so Unicode characters (checkmarks, arrows, em-dashes)
+# don't crash on Windows systems with GBK/CP936 console encoding.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import config
 
 # ── Compatibility patches ─────────────────────────────────────────────────────
@@ -117,8 +124,13 @@ def run_whisper(wav_path: Path, whisper_json: Path, language: str | None) -> lis
     if whisper_json.exists():
         print("[2/4] Loading cached Whisper result...", flush=True)
         segs = json.loads(whisper_json.read_text(encoding="utf-8"))
-        print(f"      {len(segs)} segments from cache", flush=True)
-        return segs
+        if not segs:
+            print("[WARN] Cache has 0 segments — previous run may have failed.", flush=True)
+            print(f"       Deleting stale cache and re-transcribing...", flush=True)
+            whisper_json.unlink()
+        else:
+            print(f"      {len(segs)} segments from cache", flush=True)
+            return segs
 
     device = _resolve_device()
     compute_type = "float16" if device == "cuda" else "int8"
@@ -180,10 +192,17 @@ def run_diarization(wav_path: Path, diarize_json: Path) -> list[dict]:
         return []
 
     os.environ["HF_TOKEN"] = token
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = token  # legacy name, some versions need it
     print("[3/4] Loading pyannote/speaker-diarization-3.1...", flush=True)
     print("      (First run: downloading pyannote models ~500 MB — please wait)", flush=True)
     try:
-        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=token)
+        # pyannote >= 3.0 uses token= ; older versions used use_auth_token=
+        try:
+            pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1", token=token)
+        except TypeError:
+            pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1", use_auth_token=token)
     except Exception as e:
         err = str(e)
         if any(k in err for k in ("401", "403", "gated", "unauthorized", "PermissionError")):
@@ -366,6 +385,13 @@ def _main():
         whisper_segments = json.loads(paths["whisper_json"].read_text(encoding="utf-8"))
     else:
         whisper_segments = run_whisper(paths["wav"], paths["whisper_json"], language)
+
+    if not whisper_segments:
+        print("ERROR: No speech detected in audio. Possible causes:", flush=True)
+        print("  - Audio is silent or contains no speech", flush=True)
+        print("  - Wrong --language setting (try omitting it for auto-detect)", flush=True)
+        print("  - Corrupted or truncated file", flush=True)
+        sys.exit(1)
 
     if args.transcribe_only:
         speaker_turns = []
