@@ -36,7 +36,7 @@ Can you see my screen? So I ran the layout experiment...
 **1. Clone and install**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/meeting-transcriber.git
+git clone https://github.com/AkikoAkaki/meeting-transcriber.git
 cd meeting-transcriber
 pip install -r requirements.txt
 ```
@@ -56,10 +56,13 @@ Accept pyannote model terms (one-time):
 **3. Transcribe**
 
 ```bash
-# Option A — drop a file and run manually
+# Option A — GUI (recommended)
+python gui.py
+
+# Option B — CLI
 python transcribe.py inbox/my-meeting.mp4
 
-# Option B — start the watcher (auto-transcribes anything dropped in inbox/)
+# Option C — drop a file into inbox/ and start the watcher
 python watch.py
 ```
 
